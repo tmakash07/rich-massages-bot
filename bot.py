@@ -55,6 +55,14 @@ CREATE TABLE IF NOT EXISTS saved_messages (
 """)
 db.commit()
 
+# V2 channel publishing/editing fields (safe for existing SQLite DBs)
+for table, coldef in [("saved_messages", "chat_id TEXT"), ("saved_messages", "message_id INTEGER"), ("drafts", "target_chat TEXT"), ("drafts", "saved_id TEXT")]:
+    try:
+        db.execute(f"ALTER TABLE {table} ADD COLUMN {coldef}")
+    except sqlite3.OperationalError:
+        pass
+db.commit()
+
 bot = Bot(BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
 dp = Dispatcher(storage=MemoryStorage())
 router = Router()
@@ -149,8 +157,8 @@ async def open_saved(callback: CallbackQuery):
     name, html = row
     draft_id = uuid.uuid4().hex
     db.execute(
-        "INSERT INTO drafts(id,user_id,name,html) VALUES(?,?,?,?)",
-        (draft_id, callback.from_user.id, name, html)
+        "INSERT INTO drafts(id,user_id,name,html,saved_id) VALUES(?,?,?,?,?)",
+        (draft_id, callback.from_user.id, name, html, sid)
     )
     db.commit()
     await callback.message.answer(
@@ -164,7 +172,7 @@ async def open_saved(callback: CallbackQuery):
 async def api_get_draft(request):
     draft_id = request.match_info["draft_id"]
     row = db.execute(
-        "SELECT id,user_id,name,html FROM drafts WHERE id=?",
+        "SELECT id,user_id,name,html,saved_id FROM drafts WHERE id=?",
         (draft_id,)
     ).fetchone()
     if not row:
@@ -221,6 +229,53 @@ async def api_save_draft(request):
 
     return web.json_response({"ok": True, "message": "Rich message sent and saved."})
 
+async def api_send_channel(request):
+    draft_id = request.match_info["draft_id"]
+    data = await request.json()
+    html = str(data.get("html", ""))
+    name = str(data.get("name", "Rich Message"))[:100]
+    chat_id = str(data.get("chat_id", "")).strip()
+    if not chat_id:
+        return web.json_response({"ok": False, "error": "Enter a channel @username or chat ID."}, status=400)
+    if len(html) > 32768:
+        return web.json_response({"ok": False, "error": "Rich message is over 32K characters."}, status=400)
+    row = db.execute("SELECT user_id FROM drafts WHERE id=?", (draft_id,)).fetchone()
+    if not row:
+        return web.json_response({"ok": False, "error": "Draft not found"}, status=404)
+    try:
+        sent = await bot.send_rich_message(
+            chat_id=chat_id,
+            rich_message=InputRichMessage(html=html, skip_entity_detection=False)
+        )
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"Telegram rejected it: {e}"}, status=400)
+    sid = uuid.uuid4().hex
+    db.execute("""INSERT INTO saved_messages(id,user_id,name,html,chat_id,message_id)
+                   VALUES(?,?,?,?,?,?)""", (sid, row[0], name, html, chat_id, sent.message_id))
+    db.execute("UPDATE drafts SET name=?,html=?,target_chat=?,updated_at=CURRENT_TIMESTAMP WHERE id=?",
+               (name, html, chat_id, draft_id))
+    db.commit()
+    return web.json_response({"ok": True, "message": "Posted to channel and saved.", "message_id": sent.message_id, "chat_id": chat_id, "saved_id": sid})
+
+async def api_edit_channel(request):
+    sid = request.match_info["saved_id"]
+    data = await request.json()
+    html = str(data.get("html", ""))
+    name = str(data.get("name", "Rich Message"))[:100]
+    row = db.execute("SELECT user_id,chat_id,message_id FROM saved_messages WHERE id=?", (sid,)).fetchone()
+    if not row or row[0] != int(data.get("user_id", 0)):
+        return web.json_response({"ok": False, "error": "Saved message not found"}, status=404)
+    if not row[1] or not row[2]:
+        return web.json_response({"ok": False, "error": "This saved message has no channel post."}, status=400)
+    try:
+        await bot.edit_message_text(chat_id=row[1], message_id=row[2],
+            rich_message=InputRichMessage(html=html, skip_entity_detection=False))
+    except Exception as e:
+        return web.json_response({"ok": False, "error": f"Telegram rejected the edit: {e}"}, status=400)
+    db.execute("UPDATE saved_messages SET name=?,html=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (name, html, sid))
+    db.commit()
+    return web.json_response({"ok": True, "message": "Channel post updated."})
+
 async def api_preview(request):
     # Browser preview uses the same HTML the user is composing.
     data = await request.json()
@@ -239,6 +294,8 @@ async def main():
     app.router.add_get("/app", app_handler)
     app.router.add_get("/api/draft/{draft_id}", api_get_draft)
     app.router.add_post("/api/draft/{draft_id}", api_save_draft)
+    app.router.add_post("/api/channel/{draft_id}", api_send_channel)
+    app.router.add_post("/api/channel/edit/{saved_id}", api_edit_channel)
     app.router.add_post("/api/preview", api_preview)
 
     runner = web.AppRunner(app)

@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Rich Message Builder</title>
+<script src="https://telegram.org/js/telegram-web-app.js?63"></script>
+<style>
+:root{--bg:#1c1c1d;--panel:#202021;--black:#050505;--line:#40506a;--cyan:#7ee7f5;--muted:#8f8f93;--danger:#f35c5c}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:#eee;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+header{position:sticky;top:0;z-index:10;background:#171718;border-bottom:1px solid #30343b;padding:14px 18px}
+h1{font-size:22px;margin:0 0 12px}.bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+button{border:0;border-radius:10px;background:#050505;color:#eee;padding:12px 15px;font-weight:700;cursor:pointer}
+button.cyan{color:var(--cyan)}button.danger{background:#3b1d1d;color:#ff7474}button:disabled{opacity:.4;cursor:not-allowed}
+.tabs{display:flex;border:1px solid var(--line);border-radius:12px;overflow:hidden;margin:12px 0}.tabs button{flex:1;border-radius:0;background:#050505;color:#888}.tabs button.active{background:#232324;color:var(--cyan)}
+main{padding:14px 16px 110px;max-width:900px;margin:auto}.block{border:2px solid #3b4b63;border-radius:14px;padding:14px;margin:12px 0;background:#1d1d1e}
+.blocktop{display:flex;justify-content:space-between;align-items:center;color:#aaa;font-size:12px;text-transform:uppercase;letter-spacing:.08em}
+.actions{display:flex;gap:5px}.actions button{padding:7px 9px}
+textarea,input{width:100%;background:#1a1a1b;color:#eee;border:2px solid #3d3d3f;border-radius:10px;padding:12px;font-size:15px;outline:none}textarea:focus,input:focus{border-color:#e04f4f}
+textarea{min-height:110px;resize:vertical}.format{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.format button{padding:8px 11px;background:#0b0b0c}.format button.on{background:#3d4657;color:#fff}
+.addgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:14px}.addgrid button{min-height:58px;color:var(--cyan)}
+.previewbox{background:#000;border-radius:28px;padding:24px;min-height:180px;overflow:auto}.previewbox h1,.previewbox h2,.previewbox h3{margin-top:0}.previewbox table{border-collapse:collapse;width:100%}.previewbox td,.previewbox th{border:1px solid #777;padding:8px}.previewbox blockquote{border-left:4px solid #aaa;padding-left:12px}.previewbox mark{background:#ffeb55;color:#111}.previewbox details{background:#161616;padding:10px;border-radius:8px}
+table.editor{width:100%;border-collapse:collapse;margin-top:10px}table.editor td,table.editor th{border:1px solid #555;padding:5px}table.editor input{border:1px solid #555;padding:8px;border-radius:6px}
+.small{color:#999;font-size:12px}.counter{position:fixed;bottom:0;left:0;right:0;background:#1a1a1b;border-top:1px solid #384455;padding:10px 16px;display:flex;justify-content:space-between;gap:10px;z-index:20}.counter button{background:#666}
+.row{display:flex;gap:10px;align-items:center}.row>*{flex:1}
+#codearea{min-height:65vh;font-family:monospace}
+.media-preview{margin-top:10px;max-width:100%;border-radius:10px}
+@media(max-width:600px){.addgrid{grid-template-columns:repeat(2,1fr)}.counter{font-size:12px}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Rich Message Builder</h1>
+  <div class="bar">
+    <label><input id="rtl" type="checkbox" style="width:auto"> RTL</label>
+    <button onclick="toggleTheme()">☼</button>
+    <button class="danger" onclick="clearAll()">Clear All</button>
+  </div>
+</header>
+
+<main>
+  <div class="tabs">
+    <button id="tabEdit" class="active" onclick="showTab('edit')">Edit</button>
+    <button id="tabPreview" onclick="showTab('preview')">Preview</button>
+    <button id="tabCode" onclick="showTab('code')">Code</button>
+  </div>
+
+  <section id="edit"></section>
+<div class="addgrid">
+  <button onclick="add('text')">＋ Text</button><button onclick="add('heading')">＋ Heading</button><button onclick="add('list')">＋ List</button>
+  <button onclick="add('quote')">＋ Quote</button><button onclick="add('media')">＋ Single Media</button><button onclick="add('collage')">＋ Collage/Slideshow</button>
+  <button onclick="add('table')">＋ Table</button><button onclick="add('details')">＋ Expandable</button><button onclick="add('formula')">＋ Formula</button>
+</div>
+
+  <section id="preview" style="display:none">
+    <div class="previewbox" id="previewbox"></div>
+  </section>
+
+  <section id="code" style="display:none">
+    <textarea id="codearea" spellcheck="false"></textarea>
+    <button class="cyan" onclick="copyCode()">Copy HTML</button>
+  </section>
+</main>
+
+<div class="counter">
+  <span id="stats">Ch: 0/32k · Blk: 0/500 · Dep: 1/16 · Med: 0/50</span>
+  <button id="sendBtn" onclick="saveAndSend()">✈️ Save & Send</button>
+</div>
+
+<script>
+const tg = window.Telegram?.WebApp;
+if(tg){tg.ready();tg.expand();}
+
+const qs = new URLSearchParams(location.search);
+const draftId = qs.get("draft_id");
+let blocks = [];
+let dirty = false;
+
+const escapeHtml = s => String(s??"").replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;").replaceAll('"',"&quot;");
+const uid = ()=>Math.random().toString(36).slice(2,9);
+
+function block(type,data={}){return {id:uid(),type,...data}}
+
+function defaultText(){return block("text",{text:""})}
+
+function render(){
+  const root=document.getElementById("edit");
+  root.innerHTML="";
+  blocks.forEach((b,i)=>root.appendChild(renderBlock(b,i)));
+  updateStats();
+  document.getElementById("codearea").value=toHtml();
+  document.getElementById("previewbox").innerHTML=toHtml()||"<i>Empty</i>";
+}
+
+function renderBlock(b,i){
+  const el=document.createElement("div"); el.className="block";
+  let body="";
+  const move=`<button onclick="moveBlock(${i},-1)">⌃</button><button onclick="moveBlock(${i},1)">⌄</button><button onclick="dupBlock(${i})">▣</button><button onclick="delBlock(${i})">🗑</button>`;
+  el.innerHTML=`<div class="blocktop"><b>${b.type}</b><div class="actions">${move}</div></div>`;
+
+  if(b.type==="text"){
+    el.innerHTML+=`<textarea data-id="${b.id}" oninput="setText('${b.id}',this.value)">${escapeHtml(b.text)}</textarea>
+    <div class="format">
+      <button onclick="wrapText('${b.id}','b')"><b>B</b></button>
+      <button onclick="wrapText('${b.id}','i')"><i>I</i></button>
+      <button onclick="wrapText('${b.id}','u')"><u>U</u></button>
+      <button onclick="wrapText('${b.id}','s')"><s>S</s></button>
+      <button onclick="wrapText('${b.id}','tg-spoiler')">Spoiler</button>
+      <button onclick="wrapText('${b.id}','code')">Code</button>
+      <button onclick="wrapText('${b.id}','mark')">Mark</button>
+      <button onclick="wrapText('${b.id}','sub')">x₂</button>
+      <button onclick="wrapText('${b.id}','sup')">x²</button>
+    </div>`;
+  } else if(b.type==="heading"){
+    el.innerHTML+=`<div class="row"><input value="${escapeHtml(b.text)}" placeholder="Heading..." oninput="b.text=this.value;dirty=true"><select onchange="b.size=+this.value;dirty=true"><option ${b.size==1?'selected':''}>1</option><option ${b.size==2?'selected':''}>2</option><option ${b.size==3?'selected':''}>3</option><option ${b.size==4?'selected':''}>4</option></select></div>`;
+  } else if(b.type==="list"){
+    el.innerHTML+=`<div class="row"><select onchange="b.ordered=this.value==='ol';dirty=true"><option ${!b.ordered?'selected':''}>Bulleted</option><option ${b.ordered?'selected':''}>Numbered</option></select></div>
+      <div id="items-${b.id}"></div><button class="cyan" onclick="b.items.push('New item');render()">＋ Item</button>`;
+    setTimeout(()=>{const x=document.getElementById("items-"+b.id); if(x)x.innerHTML=b.items.map((v,j)=>`<div class="row" style="margin:6px 0"><input value="${escapeHtml(v)}" oninput="b.items[${j}]=this.value;dirty=true"><button onclick="b.items.splice(${j},1);render()">✕</button></div>`).join("")},0);
+  } else if(b.type==="quote"){
+    el.innerHTML+=`<textarea placeholder="Quote..." oninput="b.text=this.value;dirty=true">${escapeHtml(b.text)}</textarea><input placeholder="Credit (optional)" value="${escapeHtml(b.credit||"")}" oninput="b.credit=this.value;dirty=true">`;
+  } else if(b.type==="details"){
+    el.innerHTML+=`<input placeholder="Summary / title" value="${escapeHtml(b.summary)}" oninput="b.summary=this.value;dirty=true"><textarea placeholder="Content..." oninput="b.content=this.value;dirty=true">${escapeHtml(b.content)}</textarea><label><input type="checkbox" style="width:auto" ${b.open?'checked':''} onchange="b.open=this.checked;dirty=true"> Open by default</label>`;
+  } else if(b.type==="formula"){
+    el.innerHTML+=`<input placeholder="LaTeX e.g. E = mc^2" value="${escapeHtml(b.expr)}" oninput="b.expr=this.value;dirty=true"><div class="small">Formula source is raw LaTeX.</div>`;
+  } else if(b.type==="media"){
+    el.innerHTML+=`<select onchange="b.kind=this.value;dirty=true"><option value="img" ${b.kind==='img'?'selected':''}>Image</option><option value="video" ${b.kind==='video'?'selected':''}>Video</option><option value="audio" ${b.kind==='audio'?'selected':''}>Audio</option></select>
+    <input placeholder="Public HTTPS media URL" value="${escapeHtml(b.url)}" oninput="b.url=this.value;dirty=true"><input placeholder="Caption" value="${escapeHtml(b.caption||'')}" oninput="b.caption=this.value;dirty=true">
+    <div class="small">For the first version, media uses a public HTTPS URL.</div>`;
+  } else if(b.type==="table"){
+    el.innerHTML+=renderTableEditor(b);
+  } else if(b.type==="collage" || b.type==="slideshow"){
+    el.innerHTML+=`<input placeholder="Caption (optional)" value="${escapeHtml(b.caption||'')}" oninput="b.caption=this.value;dirty=true">
+    <div id="media-${b.id}"></div><button class="cyan" onclick="b.urls.push('');render()">＋ Media URL</button>`;
+    setTimeout(()=>{const x=document.getElementById("media-"+b.id); if(x)x.innerHTML=b.urls.map((v,j)=>`<div class="row" style="margin:6px 0"><input placeholder="HTTPS URL" value="${escapeHtml(v)}" oninput="b.urls[${j}]=this.value;dirty=true"><button onclick="b.urls.splice(${j},1);render()">✕</button></div>`).join("")},0);
+  }
+  return el;
+}
+
+function renderTableEditor(b){
+  let h=`<input placeholder="Table caption (optional)" value="${escapeHtml(b.caption||'')}" oninput="b.caption=this.value;dirty=true">
+  <table class="editor"><tbody>`;
+  b.rows.forEach((r,ri)=>{
+    h+="<tr>"+r.map((v,ci)=>`<td><input value="${escapeHtml(v)}" oninput="b.rows[${ri}][${ci}]=this.value;dirty=true"></td>`).join("")+
+      `<td><button onclick="b.rows.splice(${ri},1);render()">✕</button></td></tr>`;
+  });
+  h+=`</tbody></table>
+  <div class="bar" style="margin-top:8px">
+    <button class="cyan" onclick="b.rows.push(Array(b.rows[0]?.length||2).fill(''));render()">＋ Row</button>
+    <button class="cyan" onclick="b.rows.forEach(r=>r.push(''));render()">＋ Column</button>
+    <button onclick="b.rows.forEach(r=>r.pop());render()">− Column</button>
+  </div>
+  <label><input type="checkbox" style="width:auto" ${b.bordered?'checked':''} onchange="b.bordered=this.checked;dirty=true"> Bordered</label>
+  <label><input type="checkbox" style="width:auto" ${b.striped?'checked':''} onchange="b.striped=this.checked;dirty=true"> Striped</label>
+  <label><input type="checkbox" style="width:auto" ${b.compact?'checked':''} onchange="b.compact=this.checked;dirty=true"> Compact</label>`;
+  return h;
+}
+
+function setText(id,v){const b=blocks.find(x=>x.id===id);if(b){b.text=v;dirty=true;updateStats()}}
+function moveBlock(i,d){const j=i+d;if(j<0||j>=blocks.length)return;[blocks[i],blocks[j]]=[blocks[j],blocks[i]];render();dirty=true}
+function dupBlock(i){const c=JSON.parse(JSON.stringify(blocks[i]));c.id=uid();blocks.splice(i+1,0,c);render();dirty=true}
+function delBlock(i){blocks.splice(i,1);render();dirty=true}
+
+function wrapText(id,tag){
+  const b=blocks.find(x=>x.id===id); const ta=document.querySelector(`textarea[data-id="${id}"]`);
+  if(!b||!ta)return; const a=ta.selectionStart,e=ta.selectionEnd,sel=b.text.slice(a,e);
+  const replacement=`<${tag}>${sel||"text"}</${tag}>`;
+  b.text=b.text.slice(0,a)+replacement+b.text.slice(e); dirty=true; render();
+}
+function add(type){
+  const map={
+    text:()=>block("text",{text:""}),
+    heading:()=>block("heading",{text:"Heading",size:2}),
+    list:()=>block("list",{items:["Item 1","Item 2"],ordered:false}),
+    quote:()=>block("quote",{text:"Quote",credit:""}),
+    table:()=>block("table",{rows:[["Header 1","Header 2"],["Value 1","Value 2"]],caption:"",bordered:true,striped:false,compact:true}),
+    details:()=>block("details",{summary:"More details",content:"Expandable content",open:false}),
+    formula:()=>block("formula",{expr:"E = mc^2"}),
+    media:()=>block("media",{kind:"img",url:"",caption:""}),
+    collage:()=>block("collage",{urls:["",""],caption:""}),
+    slideshow:()=>block("slideshow",{urls:["",""],caption:""})
+  };
+  blocks.push(map[type]());render();dirty=true;
+}
+function clearAll(){if(confirm("Clear all blocks?")){blocks=[];render();dirty=true}}
+function toggleTheme(){document.body.classList.toggle("light");document.documentElement.style.setProperty("--bg",document.body.classList.contains("light")?"#f5f5f5":"#1c1c1d");document.body.style.color=document.body.classList.contains("light")?"#111":"#eee"}
+
+function inline(s){
+  s=escapeHtml(s);
+  // Restore only our intentionally generated tags. User can type HTML manually too.
+  return s.replaceAll("&lt;","<").replaceAll("&gt;",">").replaceAll("&quot;",'"');
+}
+function toHtml(){
+  return blocks.map(b=>{
+    if(b.type==="text") return `<p>${inline(b.text).replace(/\n/g,"<br/>")}</p>`;
+    if(b.type==="heading") return `<h${Math.min(6,Math.max(1,b.size||2))}>${inline(b.text)}</h${Math.min(6,Math.max(1,b.size||2))}>`;
+    if(b.type==="list") return `<${b.ordered?'ol':'ul'}>${b.items.map(x=>`<li><p>${inline(x)}</p></li>`).join("")}</${b.ordered?'ol':'ul'}>`;
+    if(b.type==="quote") return `<blockquote><p>${inline(b.text).replace(/\n/g,"<br/>")}</p>${b.credit?`<cite>${inline(b.credit)}</cite>`:""}</blockquote>`;
+    if(b.type==="details") return `<details${b.open?' open':''}><summary>${inline(b.summary)}</summary><p>${inline(b.content).replace(/\n/g,"<br/>")}</p></details>`;
+    if(b.type==="formula") return `<tg-math-block>${b.expr||""}</tg-math-block>`;
+    if(b.type==="media") return b.url?`<${b.kind} src="${escapeHtml(b.url)}"${b.caption?` title="${escapeHtml(b.caption)}"`:""}/>`:"";
+    if(b.type==="table"){
+      const attrs=[b.bordered?"bordered":"",b.striped?"striped":"",b.compact?"compact":""].filter(Boolean).join(" ");
+      return `<table ${attrs}>${b.caption?`<caption>${inline(b.caption)}</caption>`:""}${b.rows.map((r,ri)=>`<tr>${r.map((v,ci)=>ri===0?`<th>${inline(v)}</th>`:`<td>${inline(v)}</td>`).join("")}</tr>`).join("")}</table>`;
+    }
+    if(b.type==="collage") return `<tg-collage>${b.urls.filter(Boolean).map(u=>`<img src="${escapeHtml(u)}"/>`).join("")}${b.caption?`<figcaption>${inline(b.caption)}</figcaption>`:""}</tg-collage>`;
+    if(b.type==="slideshow") return `<tg-slideshow>${b.urls.filter(Boolean).map(u=>`<img src="${escapeHtml(u)}"/>`).join("")}${b.caption?`<figcaption>${inline(b.caption)}</figcaption>`:""}</tg-slideshow>`;
+    return "";
+  }).join("\n");
+}
+
+function updateStats(){
+  const html=toHtml();
+  const ch=[...html].length;
+  const med=(html.match(/<(?:img|video|audio|tg-collage|tg-slideshow)\b/g)||[]).length;
+  document.getElementById("stats").textContent=`Ch: ${ch}/32k · Blk: ${blocks.length}/500 · Dep: 1/16 · Med: ${med}/50`;
+}
+function showTab(tab){
+  ["edit","preview","code"].forEach(x=>document.getElementById(x).style.display=x===tab?"block":"none");
+  ["Edit","Preview","Code"].forEach(x=>document.getElementById("tab"+x).classList.toggle("active",x.toLowerCase()===tab));
+  if(tab==="preview"){document.getElementById("previewbox").innerHTML=toHtml()||"<i>Empty</i>"}
+  if(tab==="code")document.getElementById("codearea").value=toHtml();
+}
+async function load(){
+  if(!draftId){blocks=[defaultText()];render();return}
+  try{
+    const r=await fetch(`/api/draft/${draftId}`);const d=await r.json();
+    if(!d.ok)throw new Error(d.error);
+    window.draftName=d.name;
+    if(d.html){parseBasicHtml(d.html)}else{blocks=[defaultText()]}
+    render();
+  }catch(e){console.error(e);blocks=[defaultText()];render()}
+}
+function parseBasicHtml(html){
+  // Basic reopening support. Complex rich HTML is kept as a raw text block.
+  const div=document.createElement("div");div.innerHTML=html;
+  const out=[];
+  [...div.children].forEach(x=>{
+    const tag=x.tagName.toLowerCase();
+    if(/^h[1-6]$/.test(tag))out.push(block("heading",{text:x.textContent,size:+tag[1]}));
+    else if(tag==="p")out.push(block("text",{text:x.innerHTML.replaceAll("<br>","\n")}));
+    else if(tag==="blockquote")out.push(block("quote",{text:x.textContent,credit:""}));
+    else if(tag==="table"){out.push(block("table",{rows:[...x.rows].map(r=>[...r.cells].map(c=>c.textContent)),caption:x.caption?.textContent||"",bordered:x.hasAttribute("bordered"),striped:x.hasAttribute("striped"),compact:x.hasAttribute("compact")}))}
+    else if(tag==="details")out.push(block("details",{summary:x.querySelector("summary")?.textContent||"",content:[...x.children].filter(y=>y.tagName!=="SUMMARY").map(y=>y.textContent).join("\n"),open:x.hasAttribute("open")}));
+    else out.push(block("text",{text:x.textContent}));
+  });
+  blocks=out.length?out:[defaultText()];
+}
+async function saveAndSend(){
+  const btn=document.getElementById("sendBtn");btn.disabled=true;btn.textContent="Sending…";
+  try{
+    const html=toHtml(); if(!html.trim())throw new Error("Message is empty.");
+    if([...html].length>32768)throw new Error("Rich message is over 32K characters.");
+    if(!draftId)throw new Error("Open the composer from the bot first.");
+    const r=await fetch(`/api/draft/${draftId}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({html,name:window.draftName||"Rich Message"})});
+    const d=await r.json();if(!d.ok)throw new Error(d.error);
+    if(tg)tg.showPopup({title:"Done",message:"Rich message sent and saved.",buttons:[{type:"ok"}]},()=>tg.close());
+    else alert("Rich message sent and saved.");
+  }catch(e){alert(e.message)}
+  finally{btn.disabled=false;btn.textContent="✈️ Save & Send"}
+}
+async function copyCode(){await navigator.clipboard.writeText(toHtml());alert("HTML copied.")}
+
+render();load();
+</script>
+</body>
+  </html>
+  

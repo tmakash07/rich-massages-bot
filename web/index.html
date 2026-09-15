@@ -74,8 +74,8 @@ table.editor{width:100%;border-collapse:collapse;margin-top:10px}table.editor td
 <div class="counter">
   <span id="stats">Ch: 0/32k · Blk: 0/500 · Dep: 1/16 · Med: 0/50</span>
   <button id="sendBtn" onclick="saveAndSend()">✈️ Save & Send</button>
-                                              </div>
-      <script>
+  </div>
+       <script>
 const tg = window.Telegram?.WebApp;
 if(tg){tg.ready();tg.expand();}
 
@@ -149,32 +149,54 @@ function renderBlock(b,i){
 }
 
 function renderTableEditor(b){
-  let h=`<input placeholder="Table caption (optional)" value="${escapeHtml(b.caption||'')}" oninput="b.caption=this.value;dirty=true">
+  const id = b.id;
+  let h=`<input placeholder="Table caption (optional)" value="${escapeHtml(b.caption||'')}" oninput="getBlock('${id}').caption=this.value;dirty=true">
   <table class="editor"><tbody>`;
   b.rows.forEach((r,ri)=>{
-    h+="<tr>"+r.map((v,ci)=>`<td><input value="${escapeHtml(v)}" oninput="b.rows[${ri}][${ci}]=this.value;dirty=true"></td>`).join("")+
-      `<td><button onclick="b.rows.splice(${ri},1);render()">✕</button></td></tr>`;
+    h+="<tr>"+r.map((v,ci)=>`<td><input value="${escapeHtml(v)}" oninput="getBlock('${id}').rows[${ri}][${ci}]=this.value;dirty=true"></td>`).join("")+
+      `<td><button onclick="removeTableRow('${id}',${ri})">✕</button></td></tr>`;
   });
   h+=`</tbody></table>
   <div class="bar" style="margin-top:8px">
-    <button class="cyan" onclick="b.rows.push(Array(b.rows[0]?.length||2).fill(''));render()">＋ Row</button>
-    <button class="cyan" onclick="b.rows.forEach(r=>r.push(''));render()">＋ Column</button>
-    <button onclick="b.rows.forEach(r=>r.pop());render()">− Column</button>
-    <button onclick="b.rows.length>1&&b.rows.pop();render()">− Row</button>
+    <button class="cyan" onclick="addTableRow('${id}')">＋ Row</button>
+    <button class="cyan" onclick="addTableColumn('${id}')">＋ Column</button>
+    <button onclick="removeTableColumn('${id}')">− Column</button>
+    <button onclick="removeTableRow('${id}')">− Row</button>
   </div>
-  <label><input type="checkbox" style="width:auto" ${b.bordered?'checked':''} onchange="b.bordered=this.checked;dirty=true"> Bordered</label>
-  <label><input type="checkbox" style="width:auto" ${b.striped?'checked':''} onchange="b.striped=this.checked;dirty=true"> Striped</label>
-  <label><input type="checkbox" style="width:auto" ${b.compact?'checked':''} onchange="b.compact=this.checked;dirty=true"> Compact</label>`;
+  <label><input type="checkbox" style="width:auto" ${b.bordered?'checked':''} onchange="getBlock('${id}').bordered=this.checked;dirty=true"> Bordered</label>
+  <label><input type="checkbox" style="width:auto" ${b.striped?'checked':''} onchange="getBlock('${id}').striped=this.checked;dirty=true"> Striped</label>
+  <label><input type="checkbox" style="width:auto" ${b.compact?'checked':''} onchange="getBlock('${id}').compact=this.checked;dirty=true"> Compact</label>`;
   return h;
+}
+
+function getBlock(id){ return blocks.find(x=>x.id===id); }
+function addTableRow(id){
+  const b=getBlock(id); if(!b) return;
+  const cols=b.rows.length ? b.rows[0].length : 2;
+  b.rows.push(Array(cols).fill('')); dirty=true; render();
+}
+function removeTableRow(id, index){
+  const b=getBlock(id); if(!b || b.rows.length<=1) return;
+  if(index===undefined) index=b.rows.length-1;
+  b.rows.splice(index,1); dirty=true; render();
+}
+function addTableColumn(id){
+  const b=getBlock(id); if(!b) return;
+  b.rows.forEach(r=>r.push('')); dirty=true; render();
+}
+function removeTableColumn(id){
+  const b=getBlock(id); if(!b || !b.rows.length || !b.rows[0].length) return;
+  if(b.rows[0].length<=1) return;
+  b.rows.forEach(r=>r.pop()); dirty=true; render();
 }
 
 function renderButtonsEditor(b){
-  let h=`<div id="btns-${b.id}"></div><button class="cyan" onclick="b.buttons.push({text:'Button',url:'https://t.me/'});render()">＋ Button</button>`;
-  setTimeout(()=>{const x=document.getElementById("btns-"+b.id); if(x)x.innerHTML=b.buttons.map((v,j)=>`<div class="block" style="padding:8px"><div class="row"><input placeholder="Button text" value="${escapeHtml(v.text)}" oninput="b.buttons[${j}].text=this.value;dirty=true"><input placeholder="https://..." value="${escapeHtml(v.url)}" oninput="b.buttons[${j}].url=this.value;dirty=true"><button onclick="b.buttons.splice(${j},1);render()">✕</button></div></div>`).join("")},0);
+  const id=b.id;
+  let h=`<div id="btns-${id}"></div><button class="cyan" onclick="getBlock('${id}').buttons.push({text:'Button',url:'https://t.me/'});dirty=true;render()">＋ Button</button>`;
+  setTimeout(()=>{const x=document.getElementById("btns-"+id); if(x)x.innerHTML=getBlock(id).buttons.map((v,j)=>`<div class="block" style="padding:8px"><div class="row"><input placeholder="Button text" value="${escapeHtml(v.text)}" oninput="getBlock('${id}').buttons[${j}].text=this.value;dirty=true"><input placeholder="https://..." value="${escapeHtml(v.url)}" oninput="getBlock('${id}').buttons[${j}].url=this.value;dirty=true"><button onclick="getBlock('${id}').buttons.splice(${j},1);dirty=true;render()">✕</button></div></div>`).join("")},0);
   return h;
 }
-
-function setText(id,v){const b=blocks.find(x=>x.id===id);if(b){b.text=v;dirty=true;updateStats()}}
+  function setText(id,v){const b=blocks.find(x=>x.id===id);if(b){b.text=v;dirty=true;updateStats()}}
 function moveBlock(i,d){const j=i+d;if(j<0||j>=blocks.length)return;[blocks[i],blocks[j]]=[blocks[j],blocks[i]];render();dirty=true}
 function dupBlock(i){const c=JSON.parse(JSON.stringify(blocks[i]));c.id=uid();blocks.splice(i+1,0,c);render();dirty=true}
 function delBlock(i){blocks.splice(i,1);render();dirty=true}
@@ -295,9 +317,9 @@ async function sendToChannel(){
   }catch(e){st.textContent="❌ "+e.message}
 }
 async function loadLastChannelPost(){
-  const st=document.getElementById("channelStatus");
-  if(savedId) st.textContent="✏️ This composer is linked to the saved channel post. Press 📢 Post to update it.";
-  else st.textContent="Open a saved channel post from My Saved Messages to edit it.";
+  const stEl=document.getElementById("channelStatus");
+  if(savedId) stEl.textContent="✏️ This composer is linked to the saved channel post. Press 📢 Post to update it.";
+  else stEl.textContent="Open a saved channel post from My Saved Messages to edit it.";
 }
 
 async function copyCode(){await navigator.clipboard.writeText(toHtml());alert("HTML copied.")}
@@ -305,3 +327,4 @@ async function copyCode(){await navigator.clipboard.writeText(toHtml());alert("H
 render();load();
 </script>
 </html>
+  

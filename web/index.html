@@ -50,6 +50,7 @@ table.editor{width:100%;border-collapse:collapse;margin-top:10px}table.editor td
   <button onclick="add('text')">＋ Text</button><button onclick="add('heading')">＋ Heading</button><button onclick="add('list')">＋ List</button>
   <button onclick="add('quote')">＋ Quote</button><button onclick="add('media')">＋ Single Media</button><button onclick="add('collage')">＋ Collage/Slideshow</button>
   <button onclick="add('table')">＋ Table</button><button onclick="add('details')">＋ Expandable</button><button onclick="add('formula')">＋ Formula</button>
+  <button onclick="add('buttons')">＋ Buttons</button>
 </div>
 
   <section id="preview" style="display:none">
@@ -60,19 +61,27 @@ table.editor{width:100%;border-collapse:collapse;margin-top:10px}table.editor td
     <textarea id="codearea" spellcheck="false"></textarea>
     <button class="cyan" onclick="copyCode()">Copy HTML</button>
   </section>
+
+  <section class="block" id="channelPanel">
+    <div class="blocktop"><b>📢 Channel Publishing</b></div>
+    <div class="small" style="margin:8px 0">Add the bot as a channel admin with posting permission. Your personal Telegram name is not added to the channel post.</div>
+    <div class="row"><input id="channelId" placeholder="@yourchannel or -1001234567890"><button class="cyan" onclick="sendToChannel()">📢 Post</button></div>
+    <div class="row" style="margin-top:8px"><button onclick="saveLocalOnly()">💾 Save Draft</button><button onclick="loadLastChannelPost()">✏️ Load Last Channel Post</button></div>
+    <div id="channelStatus" class="small" style="margin-top:8px"></div>
+  </section>
 </main>
 
 <div class="counter">
   <span id="stats">Ch: 0/32k · Blk: 0/500 · Dep: 1/16 · Med: 0/50</span>
   <button id="sendBtn" onclick="saveAndSend()">✈️ Save & Send</button>
-</div>
-
-<script>
+                                              </div>
+      <script>
 const tg = window.Telegram?.WebApp;
 if(tg){tg.ready();tg.expand();}
 
 const qs = new URLSearchParams(location.search);
 const draftId = qs.get("draft_id");
+let savedId = qs.get("saved_id");
 let blocks = [];
 let dirty = false;
 
@@ -127,6 +136,8 @@ function renderBlock(b,i){
     el.innerHTML+=`<select onchange="b.kind=this.value;dirty=true"><option value="img" ${b.kind==='img'?'selected':''}>Image</option><option value="video" ${b.kind==='video'?'selected':''}>Video</option><option value="audio" ${b.kind==='audio'?'selected':''}>Audio</option></select>
     <input placeholder="Public HTTPS media URL" value="${escapeHtml(b.url)}" oninput="b.url=this.value;dirty=true"><input placeholder="Caption" value="${escapeHtml(b.caption||'')}" oninput="b.caption=this.value;dirty=true">
     <div class="small">For the first version, media uses a public HTTPS URL.</div>`;
+  } else if(b.type==="buttons") {
+    el.innerHTML+=renderButtonsEditor(b);
   } else if(b.type==="table"){
     el.innerHTML+=renderTableEditor(b);
   } else if(b.type==="collage" || b.type==="slideshow"){
@@ -149,10 +160,17 @@ function renderTableEditor(b){
     <button class="cyan" onclick="b.rows.push(Array(b.rows[0]?.length||2).fill(''));render()">＋ Row</button>
     <button class="cyan" onclick="b.rows.forEach(r=>r.push(''));render()">＋ Column</button>
     <button onclick="b.rows.forEach(r=>r.pop());render()">− Column</button>
+    <button onclick="b.rows.length>1&&b.rows.pop();render()">− Row</button>
   </div>
   <label><input type="checkbox" style="width:auto" ${b.bordered?'checked':''} onchange="b.bordered=this.checked;dirty=true"> Bordered</label>
   <label><input type="checkbox" style="width:auto" ${b.striped?'checked':''} onchange="b.striped=this.checked;dirty=true"> Striped</label>
   <label><input type="checkbox" style="width:auto" ${b.compact?'checked':''} onchange="b.compact=this.checked;dirty=true"> Compact</label>`;
+  return h;
+}
+
+function renderButtonsEditor(b){
+  let h=`<div id="btns-${b.id}"></div><button class="cyan" onclick="b.buttons.push({text:'Button',url:'https://t.me/'});render()">＋ Button</button>`;
+  setTimeout(()=>{const x=document.getElementById("btns-"+b.id); if(x)x.innerHTML=b.buttons.map((v,j)=>`<div class="block" style="padding:8px"><div class="row"><input placeholder="Button text" value="${escapeHtml(v.text)}" oninput="b.buttons[${j}].text=this.value;dirty=true"><input placeholder="https://..." value="${escapeHtml(v.url)}" oninput="b.buttons[${j}].url=this.value;dirty=true"><button onclick="b.buttons.splice(${j},1);render()">✕</button></div></div>`).join("")},0);
   return h;
 }
 
@@ -178,7 +196,8 @@ function add(type){
     formula:()=>block("formula",{expr:"E = mc^2"}),
     media:()=>block("media",{kind:"img",url:"",caption:""}),
     collage:()=>block("collage",{urls:["",""],caption:""}),
-    slideshow:()=>block("slideshow",{urls:["",""],caption:""})
+    slideshow:()=>block("slideshow",{urls:["",""],caption:""}),
+    buttons:()=>block("buttons",{buttons:[{text:"Open",url:"https://t.me/"}]})
   };
   blocks.push(map[type]());render();dirty=true;
 }
@@ -187,7 +206,6 @@ function toggleTheme(){document.body.classList.toggle("light");document.document
 
 function inline(s){
   s=escapeHtml(s);
-  // Restore only our intentionally generated tags. User can type HTML manually too.
   return s.replaceAll("&lt;","<").replaceAll("&gt;",">").replaceAll("&quot;",'"');
 }
 function toHtml(){
@@ -205,6 +223,7 @@ function toHtml(){
     }
     if(b.type==="collage") return `<tg-collage>${b.urls.filter(Boolean).map(u=>`<img src="${escapeHtml(u)}"/>`).join("")}${b.caption?`<figcaption>${inline(b.caption)}</figcaption>`:""}</tg-collage>`;
     if(b.type==="slideshow") return `<tg-slideshow>${b.urls.filter(Boolean).map(u=>`<img src="${escapeHtml(u)}"/>`).join("")}${b.caption?`<figcaption>${inline(b.caption)}</figcaption>`:""}</tg-slideshow>`;
+    if(b.type==="buttons") return `<tg-button-row>${b.buttons.filter(x=>x.text&&x.url).map(x=>`<tg-button type="url" url="${escapeHtml(x.url)}">${inline(x.text)}</tg-button>`).join("")}</tg-button-row>`;
     return "";
   }).join("\n");
 }
@@ -226,13 +245,12 @@ async function load(){
   try{
     const r=await fetch(`/api/draft/${draftId}`);const d=await r.json();
     if(!d.ok)throw new Error(d.error);
-    window.draftName=d.name;
+    window.draftName=d.name; savedId = d.saved_id || savedId;
     if(d.html){parseBasicHtml(d.html)}else{blocks=[defaultText()]}
     render();
   }catch(e){console.error(e);blocks=[defaultText()];render()}
 }
 function parseBasicHtml(html){
-  // Basic reopening support. Complex rich HTML is kept as a raw text block.
   const div=document.createElement("div");div.innerHTML=html;
   const out=[];
   [...div.children].forEach(x=>{
@@ -259,10 +277,31 @@ async function saveAndSend(){
   }catch(e){alert(e.message)}
   finally{btn.disabled=false;btn.textContent="✈️ Save & Send"}
 }
+async function saveLocalOnly(){
+  const st=document.getElementById("channelStatus");
+  if(!draftId){st.textContent="Open the composer from the bot first.";return}
+  try{const r=await fetch(`/api/draft/${draftId}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({html:toHtml(),name:window.draftName||"Rich Message"})});const d=await r.json();st.textContent=d.ok?"💾 Saved.":d.error}catch(e){st.textContent=e.message}
+}
+async function sendToChannel(){
+  const chat=document.getElementById("channelId").value.trim(); const st=document.getElementById("channelStatus");
+  if(!chat){st.textContent="Enter a channel @username or chat ID.";return}
+  try{
+    const endpoint=savedId?`/api/channel/edit/${savedId}`:`/api/channel/${draftId}`;
+    const payload=savedId?{html:toHtml(),name:window.draftName||"Rich Message",user_id:tg?.initDataUnsafe?.user?.id||0}:{html:toHtml(),name:window.draftName||"Rich Message",chat_id:chat};
+    const r=await fetch(endpoint,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const d=await r.json();if(!d.ok)throw new Error(d.error);
+    if(!savedId){savedId=d.saved_id;document.getElementById("channelId").value=d.chat_id||chat;st.textContent=`✅ Posted. Message ID: ${d.message_id}`}else st.textContent="✅ Existing channel post updated.";
+    if(tg)tg.HapticFeedback?.notificationOccurred("success")
+  }catch(e){st.textContent="❌ "+e.message}
+}
+async function loadLastChannelPost(){
+  const st=document.getElementById("channelStatus");
+  if(savedId) st.textContent="✏️ This composer is linked to the saved channel post. Press 📢 Post to update it.";
+  else st.textContent="Open a saved channel post from My Saved Messages to edit it.";
+}
+
 async function copyCode(){await navigator.clipboard.writeText(toHtml());alert("HTML copied.")}
 
 render();load();
 </script>
-</body>
-  </html>
-  
+</html>

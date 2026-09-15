@@ -85,7 +85,6 @@ def composer_keyboard(draft_id: str):
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Open Composer", web_app=WebAppInfo(url=url))]
     ])
-
 @router.message(CommandStart())
 async def start(message: Message, state: FSMContext):
     await state.clear()
@@ -167,9 +166,7 @@ async def open_saved(callback: CallbackQuery):
     )
     await callback.answer()
 
-# Mini App API ---------------------------------------------------------------
-
-async def api_get_draft(request):
+    async def api_get_draft(request):
     draft_id = request.match_info["draft_id"]
     row = db.execute(
         "SELECT id,user_id,name,html,saved_id FROM drafts WHERE id=?",
@@ -277,7 +274,6 @@ async def api_edit_channel(request):
     return web.json_response({"ok": True, "message": "Channel post updated."})
 
 async def api_preview(request):
-    # Browser preview uses the same HTML the user is composing.
     data = await request.json()
     return web.json_response({"ok": True, "html": str(data.get("html", ""))})
 
